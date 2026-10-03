@@ -2,9 +2,9 @@ import * as pdfjs from 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pd
 import {
   TtsSession,
   PATH_MAP,
-  voices,
 } from 'https://cdn.jsdelivr.net/npm/@mintplex-labs/piper-tts-web@1.0.5/dist/piper-tts-web.js'
-import { franc } from 'https://esm.sh/franc-min@6.2.0'
+import voiceList from 'https://cdn.jsdelivr.net/npm/@mintplex-labs/piper-tts-web@1.0.5/dist/voices_static-D_OtJDHM.js'
+import { franc } from 'https://cdn.jsdelivr.net/npm/franc-min@6.2.0/+esm'
 import { env } from 'onnxruntime-web/wasm'
 env.wasm.proxy = true // off the UI thread; needs the headers in vercel.json
 pdfjs.GlobalWorkerOptions.workerSrc =
@@ -16,14 +16,32 @@ const status = (s, refusal = false) => {
   $('status').dataset.refusal = refusal ? 1 : ''
 }
 
+// localStorage can be missing or full; nothing here is worth failing for
+const store = {
+  get(k, fallback) {
+    try {
+      return JSON.parse(localStorage.getItem(k)) ?? fallback
+    } catch {
+      return fallback
+    }
+  },
+  set(k, v) {
+    try {
+      localStorage.setItem(k, JSON.stringify(v))
+    } catch {}
+  },
+}
+
 const audio = new Audio()
-const prefs = { rate: 1.2, vol: 0.6, ...JSON.parse(localStorage.getItem('tts.pdf') || '{}') }
+const prefs = { rate: 1.2, vol: 0.6, ...store.get('tts.pdf', {}) }
 
 let pdf, key
-let bytes, raw // the file, and the same as a one-char-per-byte string
+let raw, offsets // Mac PDFs only: the file as a one-char-per-byte string, and where each object starts
+let opening = 0 // bumped on every open and close, cancels an open in flight
 let page = 1
 let idx = 0
 let sents = []
+let els = [] // the element showing each clause
 let running = false
 let paused = false
 let gen = 0 // bumped on every jump, cancels the loop in flight
@@ -31,11 +49,15 @@ let detected = 'en'
 let session
 let queue = Promise.resolve()
 const wavs = new Map() // "page|idx" -> Promise<blob url>
+const lineCache = new Map() // page -> Promise<lines>
+const pages = new Map() // page -> Promise<clauses>
 
 // one voice per language, a "medium" one if there is
 const rank = v => ['medium', 'high', 'low', 'x_low'].indexOf(v.quality)
 const voice = {}
-for (const v of (await voices()).filter(v => PATH_MAP[v.key]).sort((a, b) => rank(a) - rank(b)))
+for (const v of Object.values(voiceList)
+  .filter(v => PATH_MAP[v.key])
+  .sort((a, b) => rank(a) - rank(b)))
   voice[v.language.family] ??= { key: v.key, name: v.language.name_native }
 for (const [code, v] of Object.entries(voice).sort((a, b) => a[1].name.localeCompare(b[1].name)))
   $('lang').add(new Option(v.name, code))
@@ -61,31 +83,30 @@ const bin = b => {
 // Mac PDFs draw accents and ligatures with odd glyphs and keep the real text in an /ActualText that pdf.js
 // ignores ("confidencial" -> "conVidencial"). Read it from the raw file: one entry per /Span, in order.
 async function actualTexts(ref) {
+  if (!raw) return []
   const obj = num => {
-    const m = new RegExp(`(?:^|[\\s>])${num} 0 obj\\b`).exec(raw)
-    return m ? [m.index, raw.indexOf('endobj', m.index)] : [0, 0]
+    const at = offsets.get(+num)
+    return at == null ? '' : raw.slice(at, raw.indexOf('endobj', at))
   }
-  const contents =
-    raw.slice(...obj(ref?.num)).match(/\/Contents\s*(\[[^\]]*\]|\d+ \d+ R)/)?.[1] ?? ''
+  const contents = obj(ref.num).match(/\/Contents\s*(\[[^\]]*\]|\d+ \d+ R)/)?.[1] ?? ''
   let ops = ''
   for (const [, num] of contents.matchAll(/(\d+) \d+ R/g)) {
-    const [a, z] = obj(num)
-    const s = raw.indexOf('stream', a)
-    if (s < 0 || s > z) continue
-    const from = s + (raw[s + 6] === '\r' ? 8 : 7)
-    const to = raw.lastIndexOf('endstream', z)
-    ops += raw.slice(a, s).includes('FlateDecode')
-      ? await inflate(bytes.subarray(from, to))
-      : raw.slice(from, to)
+    const o = obj(num)
+    const s = o.indexOf('stream')
+    if (s < 0) continue
+    const data = o.slice(s + (o[s + 6] === '\r' ? 8 : 7), o.lastIndexOf('endstream'))
+    ops += o.slice(0, s).includes('FlateDecode') ? await inflate(data) : data
   }
   return [...ops.matchAll(/\/Span\s*(<<.*?>>|\/\w+)\s*BDC/gs)]
     .map(m => m[1].match(/\/ActualText\s*(\((?:\\.|[^\\)])*\)|<[^>]*>)/s))
     .map(t => (t ? pdfString(t[1]) : null))
 }
 
-async function inflate(b) {
-  // the data may end with the line break before "endstream"
-  for (const cut of [0, 1, 2]) {
+async function inflate(s) {
+  const b = Uint8Array.from(s, c => c.charCodeAt(0))
+  // drop the line break before "endstream"; if those bytes were data after all, retry with them
+  const eol = /\r?\n$|\r$/.exec(s)?.[0].length ?? 0
+  for (const cut of new Set([eol, 0])) {
     const stream = new Blob([b.subarray(0, b.length - cut)]).stream()
     const out = new Response(stream.pipeThrough(new DecompressionStream('deflate')))
     try {
@@ -120,8 +141,13 @@ const clean = s =>
     .replace(/\u00AD/g, '')
     .replace(/[_.·•=\-–—]{4,}/g, ' ')
 
-// a page as clauses: { t: text, first: opens a sentence, brk: opens a block, head: heading, gap: silence after }
-async function read(n) {
+// a page's lines: { s: text, h: font height, y: baseline, x0, x1, edge: sits in the top or bottom margin }
+function lines(n) {
+  if (!lineCache.has(n)) lineCache.set(n, readLines(n))
+  return lineCache.get(n)
+}
+
+async function readLines(n) {
   const pg = await pdf.getPage(n)
   const tc = await pg.getTextContent({ includeMarkedContent: true })
   const isSpan = i => i.type === 'beginMarkedContentProps' && i.tag === 'Span'
@@ -129,7 +155,7 @@ async function read(n) {
   let fix = await actualTexts(pg.ref)
   if (fix.length !== tc.items.filter(isSpan).length) fix = []
 
-  const lines = [{ s: '', h: 0 }]
+  const out = [{ s: '', h: 0 }]
   const open = []
   let k = 0
   for (const it of tc.items) {
@@ -138,7 +164,7 @@ async function read(n) {
       else open.push(isSpan(it) ? { t: fix[k++] } : {})
       continue
     }
-    const l = lines.at(-1)
+    const l = out.at(-1)
     const span = open.at(-1)
     if (it.str.trim()) {
       l.h = Math.max(l.h, it.height)
@@ -152,10 +178,36 @@ async function read(n) {
       l.s += span.t
       span.done = true
     }
-    if (it.hasEOL) lines.push({ s: '', h: 0 })
+    if (it.hasEOL) out.push({ s: '', h: 0 })
   }
 
-  const text = lines.map(l => ({ ...l, s: clean(l.s).trim() })).filter(l => l.s)
+  const [, bottom, , top] = pg.view
+  const margin = 0.1 * (top - bottom)
+  return out
+    .map(l => ({ ...l, s: clean(l.s).trim(), edge: l.y < bottom + margin || l.y > top - margin }))
+    .filter(l => l.s)
+}
+
+// a page as clauses: { t: text, first: opens a sentence, brk: opens a block, head: heading, gap: silence after }
+function clauses(n) {
+  if (!pages.has(n)) pages.set(n, read(n))
+  return pages.get(n)
+}
+
+async function read(n) {
+  const doc = pdf
+  // running heads and page numbers: margin lines that are a bare number or repeat on a neighbouring page
+  const shape = l => l.s.replace(/\d+/g, '#')
+  const repeated = new Set()
+  for (const m of [n - 1, n + 1]) {
+    if (m < 1 || m > doc.numPages) continue
+    const near = await lines(m)
+    if (doc !== pdf) return []
+    for (const l of near) if (l.edge) repeated.add(shape(l))
+  }
+  const all = await lines(n)
+  if (doc !== pdf) return []
+  const text = all.filter(l => !(l.edge && (/^\W*\d+\W*$/.test(l.s) || repeated.has(shape(l)))))
   const left = Math.min(...text.map(l => l.x0))
   const width = Math.max(...text.map(l => l.x1)) - left
 
@@ -183,44 +235,50 @@ async function read(n) {
   for (const b of blocks) {
     const sentences = [...seg.segment(b.s.replace(/\s+/g, ' '))].map(x => x.segment.trim())
     sentences.filter(Boolean).forEach((sentence, i) => {
-      const clauses = sentence.split(/(?<=[,;:—–])\s+/)
-      clauses.forEach((t, j) => {
-        const gap = j < clauses.length - 1 ? GAP[t.at(-1)] : SENTENCE
+      const parts = sentence.split(/(?<=[,;:—–])\s+/)
+      parts.forEach((t, j) => {
+        const gap = j < parts.length - 1 ? GAP[t.at(-1)] : SENTENCE
         out.push({ t, first: !j, brk: !i && !j, head: b.h > body + 0.5, gap })
       })
     })
     if (out.length) out.at(-1).gap = BLOCK
   }
+  // a sentence that runs on to the next page gets no pause at the turn
+  if (out.length && !/[.!?…:"”»)]$/.test(out.at(-1).t)) out.at(-1).gap = 0
   return out
 }
 
 async function show(n, i = 0) {
+  const doc = pdf
   page = n
   idx = i
-  sents = await read(n)
+  sents = await clauses(n)
+  if (doc !== pdf) return
   $('empty').hidden = true
   $('text').hidden = false
+  $('text').lang = lang()
   $('text').replaceChildren()
+  els = []
   sents.forEach((s, j) => {
     if (s.brk) $('text').append(document.createElement(s.head ? 'h2' : 'p'))
-    if (!s.first) return (s.el = sents[j - 1].el).append(' ' + s.t)
-    s.el = document.createElement('span')
-    s.el.textContent = s.t
-    s.el.onclick = () => go(page, j)
-    $('text').lastChild.append(s.el, ' ')
+    if (!s.first) return (els[j] = els[j - 1]).append(' ' + s.t)
+    els[j] = document.createElement('span')
+    els[j].textContent = s.t
+    els[j].onclick = () => go(page, j)
+    $('text').lastChild.append(els[j], ' ')
   })
   $('folio').textContent = `${n} / ${pdf.numPages}`
   $('prev').disabled = n <= 1
   $('next').disabled = n >= pdf.numPages
   mark()
+  if (sents[idx]) wav(page, idx, sents[idx].t) // warm up, so Play answers at once
 }
 
 function mark() {
   $('text').querySelector('.now')?.classList.remove('now')
-  const el = sents[idx]?.el
-  el?.classList.add('now')
-  el?.scrollIntoView({ block: 'nearest' })
-  localStorage.setItem(key, JSON.stringify([page, idx]))
+  els[idx]?.classList.add('now')
+  els[idx]?.scrollIntoView({ block: 'nearest' })
+  store.set(key, [page, idx])
 }
 
 async function synth(text) {
@@ -241,8 +299,18 @@ async function synth(text) {
 
 function wav(p, i, text) {
   const k = p + '|' + i
-  if (!wavs.has(k)) wavs.set(k, (queue = queue.catch(() => {}).then(() => synth(text))))
+  if (!wavs.has(k)) {
+    // skipped if dropped before its turn; forgotten if it fails, so the next Play tries again
+    const job = (queue = queue.catch(() => {}).then(() => wavs.get(k) === job && synth(text)))
+    job.catch(() => wavs.get(k) === job && wavs.delete(k))
+    wavs.set(k, job)
+  }
   return wavs.get(k)
+}
+
+function flush() {
+  for (const job of wavs.values()) job.then(url => url && URL.revokeObjectURL(url)).catch(() => {})
+  wavs.clear()
 }
 
 async function speak() {
@@ -262,8 +330,16 @@ async function speak() {
       const url = await wav(page, idx, sents[idx].t)
       if (g !== gen) return
       status('')
-      // stay three clauses ahead
-      for (let k = idx + 1; k < Math.min(idx + 4, sents.length); k++) wav(page, k, sents[k].t)
+      // stay three clauses ahead, across the page turn too
+      for (let k = idx + 1; k <= idx + 3; k++) {
+        const p = page + 1
+        const j = k - sents.length
+        if (j < 0) wav(page, k, sents[k].t)
+        else if (p <= pdf.numPages)
+          clauses(p)
+            .then(next => next[j] && g === gen && wav(p, j, next[j].t))
+            .catch(() => {})
+      }
       audio.src = url
       if (!paused) await audio.play()
       await new Promise(r => (audio.onended = r))
@@ -297,6 +373,7 @@ function stop() {
 async function go(p, i = 0) {
   const was = running && !paused
   halt()
+  flush() // whatever was queued for the old position would only delay the new one
   await show(p, i)
   if (was) speak()
 }
@@ -315,11 +392,15 @@ function ui() {
 }
 
 function close() {
+  opening++
   halt()
-  wavs.clear()
+  flush()
+  lineCache.clear()
+  pages.clear()
   pdf?.destroy()
-  pdf = bytes = raw = null
+  pdf = raw = offsets = null
   sents = []
+  els = []
   $('text').replaceChildren()
   $('text').hidden = true
   $('empty').hidden = false
@@ -346,11 +427,14 @@ async function open(file) {
   if (!bin(buf.subarray(0, 1024)).includes('%PDF-'))
     return status(`${file.name} is not a PDF.`, true)
   close()
+  const mine = opening
   status('Opening…')
+  let doc, info
   try {
-    pdf = await pdfjs.getDocument({ data: buf.slice(), isEvalSupported: false, enableXfa: false })
-      .promise
+    doc = await pdfjs.getDocument({ data: buf.slice(), isEvalSupported: false }).promise
+    info = (await doc.getMetadata()).info
   } catch (e) {
+    if (mine !== opening) return
     return status(
       e.name === 'PasswordException'
         ? `${file.name} is locked with a password.`
@@ -358,22 +442,32 @@ async function open(file) {
       true,
     )
   }
-  bytes = buf
-  raw = bin(buf)
-  key = 'tts.pdf:' + file.name
+  if (mine !== opening) return doc.destroy()
+  pdf = doc
+  if (/Quartz|macOS|Mac OS X/.test(`${info?.Producer} ${info?.Creator}`)) {
+    raw = bin(buf)
+    offsets = new Map()
+    for (const m of raw.matchAll(/(?:^|[\s>])(\d+) 0 obj\b/g)) offsets.set(+m[1], m.index)
+  }
+  key = `tts.pdf:${file.name}:${file.size}`
   $('file').textContent = file.name
   $('close').hidden = false
 
   let sample = ''
-  for (let n = 1; n <= Math.min(pdf.numPages, 20) && sample.length < 1500; n++)
-    sample += (await read(n)).map(s => s.t).join(' ') + ' '
-  detected = voice[iso[franc(sample)]] ? iso[franc(sample)] : 'en'
+  for (let n = 1; n <= Math.min(pdf.numPages, 20) && sample.length < 1500; n++) {
+    sample += (await clauses(n)).map(s => s.t).join(' ') + ' '
+    if (mine !== opening) return
+  }
+  const guess = iso[franc(sample)]
+  detected = voice[guess] ? guess : 'en'
   $('lang').options[0].text = `Auto (${voice[detected].name})`
+  // the pages sampled so far were split into sentences with the previous language's rules
+  pages.clear()
 
-  const [p, i] = JSON.parse(localStorage.getItem(key) || '[1,0]')
+  const [p, i] = store.get(key, [1, 0])
   await show(Math.min(p, pdf.numPages), i)
+  if (mine !== opening) return
   ui()
-  if (sents[idx]) wav(page, idx, sents[idx].t) // warm up, so Play answers at once
   status(
     sample.trim()
       ? ''
@@ -387,21 +481,21 @@ $('prev').onclick = () => go(page - 1)
 $('next').onclick = () => go(page + 1)
 const volume = v => {
   audio.volume = $('vol').value = prefs.vol = v
-  localStorage.setItem('tts.pdf', JSON.stringify(prefs))
+  store.set('tts.pdf', prefs)
 }
 $('vol').oninput = e => volume(+e.target.value)
 const speed = r => {
   prefs.rate = Math.min(3, Math.max(0.5, Math.round(r * 10) / 10))
   audio.defaultPlaybackRate = audio.playbackRate = prefs.rate
   $('rate').textContent = prefs.rate.toFixed(1) + '×'
-  localStorage.setItem('tts.pdf', JSON.stringify(prefs))
+  store.set('tts.pdf', prefs)
 }
 speed(prefs.rate)
 volume(prefs.vol)
 $('slower').onclick = () => speed(prefs.rate - 0.1)
 $('faster').onclick = () => speed(prefs.rate + 0.1)
 $('lang').onchange = () => {
-  wavs.clear()
+  pages.clear()
   if (pdf) go(page, idx)
 }
 $('pick').onchange = e => open(e.target.files[0])

@@ -13,7 +13,7 @@
         },
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'sha256-/dOLFCtccUpPfOyxnxXIIuyuwa8+OTLilpg3eJLimu0=' blob: https://cdn.jsdelivr.net https://esm.sh https://cdnjs.cloudflare.com; worker-src 'self' blob:; connect-src 'self' https:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; media-src blob:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+          "value": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'sha256-sWSHod3wL5rJl8VFmoq/532qxGdi97+67u+pK33uv8U=' blob: https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; worker-src 'self' blob:; connect-src 'self' https:; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; media-src blob:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
         },
         {
           "key": "X-Content-Type-Options",

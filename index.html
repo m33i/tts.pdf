@@ -8,11 +8,7 @@
     rel="icon"
     href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect x='3' y='1' width='10' height='14' fill='white' stroke='%231c1f26'/><rect x='5' y='6' width='6' height='3' fill='%23ffe94e'/></svg>"
   />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link
-    rel="stylesheet"
-    href="https://fonts.googleapis.com/css2?family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&display=swap"
-  />
+  <link rel="stylesheet" href="fonts/literata.css" />
   <style>
     :root {
       --desk: #c6c9cc;
@@ -264,11 +260,19 @@
     </div>
   </main>
 
-  <!-- bundling CDNs break the wasm loaders, hence raw files and this import map; its sha256 is pinned in vercel.json -->
+  <!-- bundling CDNs break the wasm loaders, hence raw files and this import map, which also pins their hashes.
+       vercel.json pins the sha256 of the map itself: change one, change the other -->
   <script type="importmap">
     {
       "imports": {
         "onnxruntime-web/wasm": "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/esm/ort.wasm.min.js"
+      },
+      "integrity": {
+        "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs": "sha384-+0ti2moQlmLN7WZHE2RHIf5lV8hHxhxEalN0il3YZceG26fUPyOkR0hp9daxk1i7",
+        "https://cdn.jsdelivr.net/npm/@mintplex-labs/piper-tts-web@1.0.5/dist/piper-tts-web.js": "sha384-va7LzDKQh4OwedQSooVSEfUdj389TK7ab2lJZDSk18rHgMIgBHrN0/EEjFscaPRb",
+        "https://cdn.jsdelivr.net/npm/@mintplex-labs/piper-tts-web@1.0.5/dist/piper-o91UDS6e.js": "sha384-nLojCb4UPmQAqr9ZOy8bCeBPwEh37tYwSLB34o8j/Z17oGpPgFs7bGb/g9KmRGus",
+        "https://cdn.jsdelivr.net/npm/@mintplex-labs/piper-tts-web@1.0.5/dist/voices_static-D_OtJDHM.js": "sha384-K2NnzPyq+zEkk9qp+yyqW/vtYZ4tx73skWUW9sbGztsMIPVtnU3/pmYkBNfsoNPm",
+        "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/esm/ort.wasm.min.js": "sha384-VUgF76bXv2UPHbfC9F7+40lN7DSkSzbWTh3+Bf4ro0VahcSjqTJAVfTm09jjEZM4"
       }
     }
   </script>
