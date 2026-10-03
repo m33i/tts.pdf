@@ -589,22 +589,20 @@ const speed = r => {
   audio.defaultPlaybackRate = audio.playbackRate = r
   store.set('tts.pdf', prefs)
   $('speed').textContent = `${r}×`
-  // the usual speeds plus the current one, in the menu and in the settings
+  // the usual speeds plus the current one
   const all = [...new Set([...SPEEDS, r])].sort((a, b) => a - b)
-  for (const box of document.querySelectorAll('.speeds'))
-    box.replaceChildren(
-      ...all.map(x => {
-        const b = document.createElement('button')
-        b.textContent = `${x}×`
-        b.ariaPressed = x === r
-        b.onclick = () => {
-          const menu = box === $('speedmenu')
-          speed(x)
-          if (menu) speedMenu(false)
-        }
-        return b
-      }),
-    )
+  $('speedmenu').replaceChildren(
+    ...all.map(x => {
+      const b = document.createElement('button')
+      b.textContent = `${x}×`
+      b.ariaPressed = x === r
+      b.onclick = () => {
+        speed(x)
+        speedMenu(false)
+      }
+      return b
+    }),
+  )
 }
 speed(prefs.rate)
 volume(prefs.vol)

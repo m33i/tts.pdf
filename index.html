@@ -4,6 +4,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>tts.pdf</title>
   <meta name="description" content="Drop a PDF and it is read aloud, in your browser." />
+  <meta property="og:title" content="tts.pdf" />
+  <meta property="og:description" content="Drop a PDF and it is read aloud, in your browser." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://ttspdf.com/" />
   <link
     rel="icon"
     href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect x='3' y='1' width='10' height='14' fill='white' stroke='%231c1f26'/><rect x='5' y='6' width='6' height='3' fill='%23c9d6ea'/></svg>"
@@ -50,7 +54,8 @@
       height: calc(100dvh - 3rem);
       aspect-ratio: 1 / 1.414;
       max-width: calc(100vw - 1.5rem);
-      padding: clamp(1.5rem, 6vmin, 4rem);
+      --pad: clamp(1.5rem, 6vmin, 4rem);
+      padding: var(--pad);
       background: var(--paper);
       box-shadow:
         0 1px 1px rgb(28 31 38 / 0.25),
@@ -186,8 +191,10 @@
         sans-serif;
       font-variant-numeric: tabular-nums;
     }
+    /* the sheet's width follows its height, so the controls are laid out by the room they get, not by the screen */
     .foot {
       position: relative;
+      container-type: inline-size;
     }
     #status {
       position: absolute;
@@ -338,6 +345,8 @@
       right: 0;
       bottom: calc(100% + 18px);
       z-index: 1;
+      max-height: calc(100dvh - var(--pad) - 90px);
+      overflow-y: auto;
       border: 1px solid var(--edge);
       border-radius: 14px;
       background: #fff;
@@ -346,7 +355,7 @@
     #panel {
       display: grid;
       gap: 14px;
-      width: 300px;
+      width: min(300px, 100cqw);
       padding: 16px;
     }
     .menu {
@@ -432,9 +441,6 @@
     .seg [aria-pressed='true'] {
       background: #fff;
     }
-    #speedfield {
-      display: none;
-    }
     label[for] {
       border-bottom: 1px solid var(--ink);
       cursor: pointer;
@@ -456,24 +462,25 @@
       }
     }
 
-    /* too narrow for the whole row: speed moves into the settings */
-    @media (max-width: 34rem) {
+    /* a phone, upright or on its side: the sheet is the screen */
+    @media (max-width: 34rem), (max-height: 30rem) {
       .sheet {
+        width: 100vw;
         height: 100dvh;
-        max-width: 100vw;
+        max-width: none;
+        aspect-ratio: auto;
         box-shadow: none;
       }
-      .foot {
-        margin-inline: -0.5rem;
+    }
+    /* too narrow for one row with play in the middle: it gets a row of its own */
+    @container (max-width: 30rem) {
+      .controls {
+        grid-template-columns: 1fr auto;
+        row-gap: 10px;
       }
       .transport {
-        gap: 4px;
-      }
-      .speedbox {
-        display: none;
-      }
-      #speedfield {
-        display: grid;
+        grid-area: 1 / 1 / 2 / -1;
+        justify-self: center;
       }
     }
   </style>
@@ -572,7 +579,7 @@
             ></button>
             <div
               id="speedmenu"
-              class="pop menu speeds"
+              class="pop menu"
               role="group"
               aria-label="Playback speed"
               hidden
@@ -617,10 +624,6 @@
                   <input id="vol" type="range" min="0" max="1" step="0.05" value="0.6" />
                 </span>
               </label>
-              <div class="field" id="speedfield">
-                <span class="name">Speed</span>
-                <div class="seg speeds" role="group" aria-label="Playback speed"></div>
-              </div>
               <div class="field" id="view" hidden>
                 <span class="name">Pages</span>
                 <div class="seg" role="group" aria-label="Pages shown">
