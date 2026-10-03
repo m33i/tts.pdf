@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tts.pdf</title>
+<meta name="description" content="Drop a PDF and it is read aloud, in your browser.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect x='3' y='1' width='10' height='14' fill='white' stroke='%231c1f26'/><rect x='5' y='6' width='6' height='3' fill='%23ffe94e'/></svg>">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&display=swap">
+<style>
+  :root { --desk: #c6c9cc; --paper: #fdfdfb; --ink: #1c1f26; --faint: #6d727c; --marker: #ffe94e; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: grid; place-items: center;
+    background: var(--desk); color: var(--ink);
+    font: 400 1.0625rem/1.65 Literata, Georgia, serif;
+  }
+
+  .sheet {
+    position: relative; display: flex; flex-direction: column; gap: 1.5rem;
+    height: calc(100dvh - 3rem); aspect-ratio: 1 / 1.414; max-width: calc(100vw - 1.5rem);
+    padding: clamp(1.5rem, 6vmin, 4rem);
+    background: var(--paper);
+    box-shadow: 0 1px 1px rgb(28 31 38 / .25), 0 12px 28px -14px rgb(28 31 38 / .45);
+  }
+  /* paper grain */
+  .sheet::before {
+    content: ""; position: absolute; inset: 0; pointer-events: none; opacity: .5; mix-blend-mode: multiply;
+    background: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3'/><feColorMatrix values='0 0 0 0 .5  0 0 0 0 .5  0 0 0 0 .5  0 0 0 .22 0'/></filter><rect width='240' height='240' filter='url(%23n)'/></svg>");
+  }
+  .over .sheet { outline: 2px dashed var(--ink); outline-offset: -1rem; }
+
+  .head, .foot { display: flex; flex-wrap: wrap; align-items: baseline; gap: .5rem 1.5rem; font-size: .875rem; }
+  .head { justify-content: space-between; color: var(--faint); font-style: italic; }
+  #file { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 70%; }
+
+  #text { flex: 1; overflow-y: auto; scrollbar-width: thin; text-wrap: pretty; hyphens: auto; }
+  #text p { margin: 0 0 .8em; }
+  #text h2 { margin: 1.2em 0 .5em; font: 600 1.3em/1.25 Literata, Georgia, serif; hyphens: manual; }
+  #text h2:first-child { margin-top: 0; }
+  #text span { cursor: pointer; }
+  #text .now {
+    background: var(--marker); mix-blend-mode: multiply;
+    padding: .12em 0; border-radius: .25em .1em; box-decoration-break: clone; -webkit-box-decoration-break: clone;
+  }
+  .empty { display: flex; flex-direction: column; justify-content: center; max-width: 24rem; }
+  .empty h1 { margin: 0 0 1rem; font: 400 clamp(2rem, 7vmin, 3.25rem)/1.1 Literata, Georgia, serif; letter-spacing: -.015em; }
+  .empty p { margin: 0 0 1.5rem; color: var(--faint); }
+  .empty label { color: var(--ink); }
+
+  .foot { border-top: 1px solid var(--ink); padding-top: .75rem; }
+  .foot .folio { margin-left: auto; font-variant-numeric: tabular-nums; }
+  #status { flex-basis: 100%; min-height: 1.4em; color: var(--faint); font-style: italic; }
+  button, select, label[for] {
+    font: inherit; color: inherit; background: none; border: 0; border-bottom: 1px solid var(--ink);
+    border-radius: 0; padding: 0 .1em; cursor: pointer;
+  }
+  button:hover:enabled, select:hover:enabled, label[for]:hover { background: var(--marker); }
+  :disabled { opacity: .4; cursor: default; }
+  :focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+  input[type=range] { width: 5.5rem; accent-color: var(--ink); vertical-align: middle; }
+  output { display: inline-block; min-width: 2.6em; text-align: center; font-variant-numeric: tabular-nums; }
+
+  @media (max-width: 34rem) { .sheet { height: 100dvh; max-width: 100vw; box-shadow: none; } }
+</style>
+
+<main class="sheet">
+  <div class="head"><span>tts.pdf</span><span id="file"></span></div>
+
+  <article id="text" class="empty">
+    <h1>Drop a PDF on this page</h1>
+    <p>It is read aloud by a voice that runs in your browser. The file never leaves your device.</p>
+    <p><label for="pick" tabindex="0">Choose a file</label><input id="pick" type="file" accept="application/pdf" hidden></p>
+  </article>
+
+  <div class="foot">
+    <span id="status" role="status"></span>
+    <button id="play" disabled>Play</button>
+    <button id="stop" disabled>Stop</button>
+    <span><button id="slower" aria-label="Slower">−</button><output id="rate">1.2×</output><button id="faster" aria-label="Faster">+</button></span>
+    <label>Volume <input id="vol" type="range" min="0" max="1" step="0.05" value="0.6"></label>
+    <select id="lang" aria-label="Language"><option value="">Auto</option></select>
+    <span class="folio"><button id="prev" disabled aria-label="Previous page">‹</button> <span id="folio">–</span> <button id="next" disabled aria-label="Next page">›</button></span>
+  </div>
+</main>
+
+<!-- raw CDN files plus an import map: bundling CDNs polyfill node's fs and break the wasm loaders -->
+<script type="importmap">{ "imports": { "onnxruntime-web/wasm": "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/esm/ort.wasm.min.js" } }</script>
+<script type="module">
+  import * as pdfjs from 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs'
+  import { TtsSession, PATH_MAP, voices } from 'https://cdn.jsdelivr.net/npm/@mintplex-labs/piper-tts-web@1.0.5/dist/piper-tts-web.js'
+  import { franc } from 'https://esm.sh/franc-min@6.2.0'
+  pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs'
+
+  const $ = id => document.getElementById(id)
+  const status = s => $('status').textContent = s
+  const audio = new Audio()
+  const prefs = { rate: 1.2, vol: .6, ...JSON.parse(localStorage.getItem('tts.pdf') || '{}') }   // speed and volume, remembered
+
+  let pdf, key        // open document and its localStorage key
+  let page = 1, idx = 0, sents = []   // current page, sentence within it, that page's sentences
+  let running = false, paused = false, gen = 0   // gen: bumped on every jump, cancels the loop in flight
+  let detected = 'en', session, queue = Promise.resolve()
+  const wavs = new Map()   // "page|idx" -> Promise<blob url>
+
+  // one voice per language: first "medium" one, else whatever exists
+  const rank = v => ['medium', 'high', 'low', 'x_low'].indexOf(v.quality)
+  const voice = {}
+  for (const v of (await voices()).filter(v => PATH_MAP[v.key]).sort((a, b) => rank(a) - rank(b)))
+    voice[v.language.family] ??= { key: v.key, name: v.language.name_native }
+  for (const [code, v] of Object.entries(voice).sort((a, b) => a[1].name.localeCompare(b[1].name)))
+    $('lang').add(new Option(v.name, code))
+  // franc speaks ISO 639-3
+  const iso = { ara: 'ar', cat: 'ca', ces: 'cs', dan: 'da', deu: 'de', ell: 'el', eng: 'en', spa: 'es', pes: 'fa', fin: 'fi', fra: 'fr', hun: 'hu', isl: 'is', ita: 'it', kat: 'ka', kaz: 'kk', ltz: 'lb', nep: 'ne', nld: 'nl', nob: 'no', nno: 'no', pol: 'pl', por: 'pt', ron: 'ro', rus: 'ru', slk: 'sk', slv: 'sl', srp: 'sr', swe: 'sv', swh: 'sw', tur: 'tr', ukr: 'uk', vie: 'vi', cmn: 'zh' }
+  const lang = () => $('lang').value || detected
+
+  // what gets spoken in one go: a clause. { t: text, first: opens a sentence, brk: opens a block, head: in a heading, gap: ms of silence after }
+  // the voice barely stops at punctuation by itself, so each clause is its own utterance with a pause behind it
+  const GAP = { ',': 60, ';': 200, ':': 200, '—': 160, '–': 160 }, SENTENCE = 250, BLOCK = 450
+  async function read(n) {
+    const tc = await (await pdf.getPage(n)).getTextContent()
+    // text lines with their font height and baseline
+    const lines = [{ s: '', h: 0 }]
+    for (const it of tc.items) {
+      const l = lines.at(-1)
+      if (it.str.trim()) { l.h = Math.max(l.h, it.height); l.y ??= it.transform[5] }
+      l.s += it.str
+      if (it.hasEOL) lines.push({ s: '', h: 0 })
+    }
+    // a block (heading or paragraph) ends where the font size changes or the gap between lines widens
+    // ponytail: no column or table awareness; pdf.js reading order is taken as is
+    const blocks = []
+    let prev
+    for (const l of lines.filter(l => l.s.trim())) {
+      const gap = prev && prev.y - l.y
+      if (!prev || Math.abs(l.h - prev.h) > .5 || gap < 0 || gap > 1.6 * prev.h) blocks.push({ s: '', h: l.h })
+      const b = blocks.at(-1)
+      // ponytail: a trailing "-" is taken as a split word, so real hyphens at a line end are lost
+      b.s = b.s.endsWith('-') ? b.s.slice(0, -1) + l.s.trim() : (b.s + ' ' + l.s).trim()
+      prev = l
+    }
+    const sizes = {}   // body size = the one most text is set in
+    for (const b of blocks) sizes[Math.round(b.h)] = (sizes[Math.round(b.h)] || 0) + b.s.length
+    const body = +Object.keys(sizes).sort((x, y) => sizes[y] - sizes[x])[0]
+    const seg = new Intl.Segmenter(lang(), { granularity: 'sentence' })
+    return blocks.flatMap(b => [...seg.segment(b.s.replace(/\s+/g, ' '))]
+      .map(x => x.segment.trim()).filter(Boolean)
+      .flatMap((t, i) => t.split(/(?<=[,;:—–])\s+/)
+        .map((c, j, cs) => ({ t: c, first: !j, brk: !i && !j, head: b.h > body + .5, gap: j < cs.length - 1 ? GAP[c.at(-1)] : SENTENCE }))))
+      .map((s, i, all) => all[i + 1]?.brk === false ? s : { ...s, gap: BLOCK })
+  }
+
+  async function show(n, i = 0) {
+    page = n; idx = i; sents = await read(n)
+    $('text').className = ''
+    $('text').replaceChildren()
+    sents.forEach((s, j) => {
+      if (s.brk) $('text').append(document.createElement(s.head ? 'h2' : 'p'))
+      if (!s.first) return (s.el = sents[j - 1].el).append(' ' + s.t)
+      s.el = document.createElement('span')
+      s.el.textContent = s.t
+      s.el.onclick = () => go(page, j)
+      $('text').lastChild.append(s.el, ' ')
+    })
+    $('folio').textContent = `${n} / ${pdf.numPages}`
+    $('prev').disabled = n <= 1; $('next').disabled = n >= pdf.numPages
+    mark()
+  }
+
+  function mark() {
+    $('text').querySelector('.now')?.classList.remove('now')
+    const el = sents[idx]?.el
+    el?.classList.add('now'); el?.scrollIntoView({ block: 'nearest' })
+    localStorage.setItem(key, JSON.stringify([page, idx]))
+  }
+
+  async function synth(text) {
+    const v = voice[lang()]
+    if (session?.voiceId !== v.key) {
+      TtsSession._instance = null   // the library keeps a singleton; drop it to switch voice
+      session = await TtsSession.create({ voiceId: v.key, progress: p => p.url.endsWith('.onnx') && status(`Fetching the ${v.name} voice, ${Math.round(p.loaded / p.total * 100)}%`) })
+    }
+    return URL.createObjectURL(await session.predict(text))
+  }
+  function wav(p, i, text) {
+    const k = p + '|' + i
+    if (!wavs.has(k)) wavs.set(k, queue = queue.catch(() => {}).then(() => synth(text)))
+    return wavs.get(k)
+  }
+
+  async function speak() {
+    const g = ++gen
+    running = true; paused = false; ui()
+    try {
+      while (g === gen) {
+        if (idx >= sents.length) {
+          if (page >= pdf.numPages) return stop()
+          await show(page + 1)
+          continue
+        }
+        mark()
+        if (!wavs.has(page + '|' + idx)) status('Preparing the voice…')
+        const url = await wav(page, idx, sents[idx].t)
+        if (g !== gen) return
+        status('')
+        if (idx + 1 < sents.length) wav(page, idx + 1, sents[idx + 1].t)   // synthesize ahead, no gap between sentences
+        audio.src = url
+        if (!paused) await audio.play()
+        await new Promise(r => audio.onended = r)
+        URL.revokeObjectURL(url); wavs.delete(page + '|' + idx)
+        if (g !== gen) return
+        await new Promise(r => setTimeout(r, sents[idx++].gap / audio.playbackRate))
+        if (g !== gen) return
+      }
+    } catch (e) {
+      if (g !== gen) return
+      halt(); status(`Could not speak this: ${e.message}`)
+    }
+  }
+
+  function halt() { gen++; audio.pause(); running = false; ui() }
+  function stop() { halt(); idx = 0; mark(); status('') }
+  async function go(p, i = 0) {
+    const was = running && !paused
+    halt(); await show(p, i)
+    if (was) speak()
+  }
+  function toggle() {
+    if (!running) return speak()
+    paused = !paused; ui()
+    if (paused) audio.pause(); else if (!audio.ended) audio.play().catch(() => {})
+  }
+  function ui() {
+    $('play').textContent = running && !paused ? 'Pause' : 'Play'
+    $('play').disabled = $('stop').disabled = !pdf
+  }
+
+  async function open(file) {
+    if (!file) return
+    halt(); wavs.clear(); status('Opening…')
+    try { pdf = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise }
+    catch { return status(`${file.name} is not a PDF this page can open.`) }
+    key = 'tts.pdf:' + file.name
+    $('file').textContent = file.name
+
+    // sample the first pages with text to guess the language
+    let sample = ''
+    for (let n = 1; n <= Math.min(pdf.numPages, 20) && sample.length < 1500; n++) sample += (await read(n)).map(s => s.t).join(' ') + ' '
+    detected = voice[iso[franc(sample)]] ? iso[franc(sample)] : 'en'
+    $('lang').options[0].text = `Auto (${voice[detected].name})`
+
+    const [p, i] = JSON.parse(localStorage.getItem(key) || '[1,0]')
+    await show(Math.min(p, pdf.numPages), i)
+    ui()
+    status(sample.trim() ? '' : 'No text found in the first pages. If this is a scan, there is nothing to read aloud.')
+  }
+
+  $('play').onclick = toggle
+  $('stop').onclick = stop
+  $('prev').onclick = () => go(page - 1)
+  $('next').onclick = () => go(page + 1)
+  const volume = v => { audio.volume = $('vol').value = prefs.vol = v; localStorage.setItem('tts.pdf', JSON.stringify(prefs)) }
+  $('vol').oninput = e => volume(+e.target.value)
+  const speed = r => {
+    audio.defaultPlaybackRate = audio.playbackRate = prefs.rate = Math.min(3, Math.max(.5, Math.round(r * 10) / 10))
+    $('rate').textContent = prefs.rate.toFixed(1) + '×'
+    localStorage.setItem('tts.pdf', JSON.stringify(prefs))
+  }
+  speed(prefs.rate); volume(prefs.vol)
+  $('slower').onclick = () => speed(prefs.rate - .1)
+  $('faster').onclick = () => speed(prefs.rate + .1)
+  $('lang').onchange = () => { wavs.clear(); if (pdf) go(page, idx) }
+  $('pick').onchange = e => open(e.target.files[0])
+  document.querySelector('label[for=pick]').onkeydown = e => (e.key === 'Enter' || e.key === ' ') && $('pick').click()
+
+  addEventListener('dragover', e => { e.preventDefault(); document.body.classList.add('over') })
+  addEventListener('dragleave', e => e.relatedTarget || document.body.classList.remove('over'))
+  addEventListener('drop', e => { e.preventDefault(); document.body.classList.remove('over'); open(e.dataTransfer.files[0]) })
+  addEventListener('keydown', e => { if (e.key === ' ' && pdf && !e.target.closest('button, select, input, label')) { e.preventDefault(); toggle() } })
+</script>
