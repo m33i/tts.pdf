@@ -1,6 +1,8 @@
 import * as pdfjs from 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs'
 import { TtsSession, PATH_MAP, voices } from 'https://cdn.jsdelivr.net/npm/@mintplex-labs/piper-tts-web@1.0.5/dist/piper-tts-web.js'
 import { franc } from 'https://esm.sh/franc-min@6.2.0'
+import { env } from 'onnxruntime-web/wasm'
+env.wasm.proxy = true   // inference in its own thread so the page stays responsive; its threads need the headers in vercel.json
 pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs'
 
 const $ = id => document.getElementById(id)
@@ -90,6 +92,7 @@ async function synth(text) {
   if (session?.voiceId !== v.key) {
     TtsSession._instance = null   // the library keeps a singleton; drop it to switch voice
     session = await TtsSession.create({ voiceId: v.key, progress: p => p.url.endsWith('.onnx') && status(`Fetching the ${v.name} voice, ${Math.round(p.loaded / p.total * 100)}%`) })
+    status('')
   }
   return URL.createObjectURL(await session.predict(text))
 }
@@ -114,7 +117,7 @@ async function speak() {
       const url = await wav(page, idx, sents[idx].t)
       if (g !== gen) return
       status('')
-      if (idx + 1 < sents.length) wav(page, idx + 1, sents[idx + 1].t)   // synthesize ahead, no gap between sentences
+      for (let k = idx + 1; k < Math.min(idx + 4, sents.length); k++) wav(page, k, sents[k].t)   // stay three clauses ahead
       audio.src = url
       if (!paused) await audio.play()
       await new Promise(r => audio.onended = r)
@@ -163,6 +166,7 @@ async function open(file) {
   const [p, i] = JSON.parse(localStorage.getItem(key) || '[1,0]')
   await show(Math.min(p, pdf.numPages), i)
   ui()
+  if (sents[idx]) wav(page, idx, sents[idx].t)   // warm up, so Play answers at once
   status(sample.trim() ? '' : 'No text found in the first pages. If this is a scan, there is nothing to read aloud.')
 }
 
