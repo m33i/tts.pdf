@@ -6,16 +6,22 @@
   <meta name="description" content="Drop a PDF and it is read aloud, in your browser." />
   <link
     rel="icon"
-    href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect x='3' y='1' width='10' height='14' fill='white' stroke='%231c1f26'/><rect x='5' y='6' width='6' height='3' fill='%23ffe94e'/></svg>"
+    href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect x='3' y='1' width='10' height='14' fill='white' stroke='%231c1f26'/><rect x='5' y='6' width='6' height='3' fill='%23c9d6ea'/></svg>"
   />
   <link rel="stylesheet" href="fonts/literata.css" />
+  <link rel="stylesheet" href="fonts/instrument-sans.css" />
   <style>
     :root {
-      --desk: #c6c9cc;
-      --paper: #fdfdfb;
-      --ink: #1c1f26;
-      --faint: #6d727c;
-      --marker: #ffe94e;
+      --desk: #ececea;
+      --paper: #f9f9f7;
+      --ink: #232323;
+      --faint: #6a6a65;
+      --marker: #dde6f3;
+      --surface: #eeeeea;
+      --pressed: #deded8;
+      --track: #e2e2dd;
+      --edge: #e4e4df;
+      --line: rgb(35 35 35 / 0.2);
     }
     * {
       box-sizing: border-box;
@@ -67,34 +73,31 @@
 
     .head,
     .foot {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: baseline;
-      gap: 0.5rem 1.5rem;
       font-size: 0.875rem;
     }
     .head {
+      display: flex;
+      align-items: center;
+      gap: 1.5rem;
       justify-content: space-between;
+      min-height: 44px;
+    }
+    .head > span:first-child,
+    #file {
       color: var(--faint);
       font-style: italic;
     }
     .doc {
       display: flex;
-      align-items: baseline;
-      gap: 0.75rem;
+      align-items: center;
+      gap: 0.5rem;
       min-width: 0;
-      max-width: 75%;
     }
     #file {
+      margin-right: 0.25rem;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-    }
-    #close {
-      font-style: normal;
-      font-size: 1.15rem;
-      line-height: 1;
-      color: var(--ink);
     }
 
     [hidden] {
@@ -102,10 +105,29 @@
     }
     #text {
       flex: 1;
+      min-height: 0;
+      display: grid;
+      grid-auto-flow: column;
+      grid-auto-columns: minmax(0, 1fr);
+    }
+    .page {
       overflow-y: auto;
       scrollbar-width: thin;
       text-wrap: pretty;
       hyphens: auto;
+    }
+    /* the fold of an open book */
+    .page + .page {
+      margin-left: clamp(1.25rem, 3vmin, 2.5rem);
+      padding-left: clamp(1.25rem, 3vmin, 2.5rem);
+      border-left: 1px solid var(--line);
+    }
+    .two .sheet {
+      aspect-ratio: 1.414 / 1;
+    }
+    /* a last odd page keeps to its half */
+    .two #text {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
     #text p {
       margin: 0 0 0.8em;
@@ -155,62 +177,303 @@
       color: var(--ink);
     }
 
-    .foot {
-      border-top: 1px solid var(--ink);
-      padding-top: 0.75rem;
-    }
-    .foot .folio {
-      margin-left: auto;
+    /* the player: progress, one row of controls, and the settings that float above it */
+    .foot,
+    .pop {
+      font:
+        15px/1.2 'Instrument Sans',
+        'Helvetica Neue',
+        sans-serif;
       font-variant-numeric: tabular-nums;
     }
-    #status {
-      flex-basis: 100%;
-      min-height: 1.4em;
-      color: var(--faint);
-      font-style: italic;
+    .foot {
+      position: relative;
     }
+    #status {
+      position: absolute;
+      bottom: 100%;
+      left: 0;
+      padding-bottom: 8px;
+      color: var(--faint);
+      font:
+        italic 0.875rem Literata,
+        Georgia,
+        serif;
+    }
+    .track {
+      height: 4px;
+      margin-bottom: 18px;
+      border-radius: 2px;
+      background: var(--track);
+    }
+    #bar {
+      width: 0;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--ink);
+      transition: width 0.3s;
+    }
+    .controls {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+      align-items: center;
+    }
+
     button,
-    select,
-    label[for] {
+    select {
       font: inherit;
       color: inherit;
       background: none;
       border: 0;
-      border-bottom: 1px solid var(--ink);
-      border-radius: 0;
-      padding: 0 0.1em;
+      padding: 0;
       cursor: pointer;
     }
-    button:hover:enabled,
-    select:hover:enabled,
+    svg {
+      display: block;
+      width: 20px;
+      height: 20px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.75;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .solid {
+      fill: currentColor;
+    }
+    /* icon buttons: square in a group, round on their own */
+    .pages button,
+    .round,
+    #settings,
+    #close {
+      display: grid;
+      place-items: center;
+      width: 44px;
+      height: 44px;
+    }
+    .round,
+    #close {
+      border-radius: 50%;
+    }
+    .pages {
+      justify-self: start;
+      display: flex;
+      align-items: center;
+    }
+    .pages,
+    .pages button,
+    .surface {
+      height: 44px;
+      border-radius: 12px;
+    }
+    .pages,
+    .surface,
+    #close {
+      background: var(--surface);
+    }
+    #folio {
+      min-width: 60px;
+      text-align: center;
+      color: var(--faint);
+    }
+    #cur {
+      color: var(--ink);
+    }
+    .transport {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    #play {
+      display: grid;
+      place-items: center;
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      background: var(--ink);
+      color: #fff;
+    }
+    #play svg {
+      width: 22px;
+      height: 22px;
+    }
+    #play .pause,
+    #play.playing .play {
+      display: none;
+    }
+    #play.playing .pause {
+      display: block;
+    }
+    .right {
+      justify-self: end;
+      display: flex;
+      gap: 8px;
+    }
+    .anchor {
+      position: relative;
+    }
+    .surface {
+      min-width: 56px;
+      padding: 0 12px;
+    }
+    #settings {
+      min-width: 0;
+      padding: 0;
+    }
+    .round:hover:enabled {
+      background: var(--surface);
+    }
+    .pages button:hover:enabled,
+    .surface:hover,
+    #close:hover,
+    [aria-expanded='true'] {
+      background: var(--pressed);
+    }
+    #play:hover:enabled {
+      background: #000;
+    }
+
+    .pop {
+      position: absolute;
+      right: 0;
+      bottom: calc(100% + 18px);
+      z-index: 1;
+      border: 1px solid var(--edge);
+      border-radius: 14px;
+      background: #fff;
+      box-shadow: 0 12px 32px rgb(31 31 31 / 0.12);
+    }
+    #panel {
+      display: grid;
+      gap: 14px;
+      width: 300px;
+      padding: 16px;
+    }
+    .menu {
+      display: grid;
+      gap: 2px;
+      min-width: 96px;
+      padding: 6px;
+    }
+    .menu button {
+      height: 44px;
+      padding: 0 12px;
+      border-radius: 8px;
+      text-align: left;
+    }
+    .menu button:hover,
+    .menu [aria-pressed='true'] {
+      background: var(--surface);
+    }
+    .menu [aria-pressed='true'] {
+      font-weight: 600;
+    }
+    .field {
+      display: grid;
+      gap: 6px;
+    }
+    .name {
+      font-size: 13px;
+      color: var(--faint);
+    }
+    .select {
+      position: relative;
+    }
+    select {
+      appearance: none;
+      width: 100%;
+      height: 44px;
+      padding: 0 36px 0 12px;
+      border-radius: 10px;
+      background: var(--surface);
+      text-overflow: ellipsis;
+    }
+    .select svg {
+      position: absolute;
+      top: 13px;
+      right: 12px;
+      width: 18px;
+      height: 18px;
+      color: var(--faint);
+      pointer-events: none;
+    }
+    .vol {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      height: 44px;
+    }
+    .vol svg {
+      flex: none;
+      width: 18px;
+      height: 18px;
+    }
+    input[type='range'] {
+      flex: 1;
+      min-width: 0;
+      height: 44px;
+      margin: 0;
+      accent-color: var(--ink);
+      cursor: pointer;
+    }
+    .seg {
+      display: flex;
+      gap: 2px;
+      padding: 2px;
+      border-radius: 10px;
+      background: var(--surface);
+    }
+    .seg button {
+      flex: 1;
+      height: 44px;
+      border-radius: 8px;
+      font-size: 13px;
+    }
+    .seg [aria-pressed='true'] {
+      background: #fff;
+    }
+    #speedfield {
+      display: none;
+    }
+    label[for] {
+      border-bottom: 1px solid var(--ink);
+      cursor: pointer;
+    }
     label[for]:hover {
       background: var(--marker);
     }
     :disabled {
-      opacity: 0.4;
+      opacity: 0.35;
       cursor: default;
     }
     :focus-visible {
-      outline: 2px solid var(--ink);
-      outline-offset: 3px;
+      outline: 2px solid #3b5ba5;
+      outline-offset: 2px;
     }
-    input[type='range'] {
-      width: 5.5rem;
-      accent-color: var(--ink);
-      vertical-align: middle;
-    }
-    output {
-      display: inline-block;
-      min-width: 2.6em;
-      text-align: center;
-      font-variant-numeric: tabular-nums;
+    @media (prefers-reduced-motion: reduce) {
+      #bar {
+        transition: none;
+      }
     }
 
+    /* too narrow for the whole row: speed moves into the settings */
     @media (max-width: 34rem) {
       .sheet {
         height: 100dvh;
         max-width: 100vw;
         box-shadow: none;
+      }
+      .foot {
+        margin-inline: -0.5rem;
+      }
+      .transport {
+        gap: 4px;
+      }
+      .speedbox {
+        display: none;
+      }
+      #speedfield {
+        display: grid;
       }
     }
   </style>
@@ -220,7 +483,9 @@
       <span>tts.pdf</span>
       <span class="doc">
         <span id="file"></span>
-        <button id="close" hidden aria-label="Close this PDF" title="Close this PDF">×</button>
+        <button id="close" hidden aria-label="Close reader" title="Close reader">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+        </button>
       </span>
     </div>
 
@@ -238,25 +503,135 @@
 
     <div class="foot">
       <span id="status" role="status"></span>
-      <button id="play" disabled>Play</button>
-      <button id="stop" disabled>Stop</button>
-      <span>
-        <button id="slower" aria-label="Slower">−</button>
-        <output id="rate">1.2×</output>
-        <button id="faster" aria-label="Faster">+</button>
-      </span>
-      <label>
-        Volume
-        <input id="vol" type="range" min="0" max="1" step="0.05" value="0.6" />
-      </label>
-      <select id="lang" aria-label="Language">
-        <option value="">Auto</option>
-      </select>
-      <span class="folio">
-        <button id="prev" disabled aria-label="Previous page">‹</button>
-        <span id="folio">–</span>
-        <button id="next" disabled aria-label="Next page">›</button>
-      </span>
+      <div
+        class="track"
+        role="progressbar"
+        aria-label="Reading progress"
+        aria-valuemin="0"
+        aria-valuemax="100"
+        aria-valuenow="0"
+      >
+        <div id="bar"></div>
+      </div>
+      <div class="controls">
+        <div class="pages">
+          <button id="prev" disabled aria-label="Previous page" title="Previous page">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
+          </button>
+          <span id="folio">
+            <span id="cur">–</span>
+            <span id="total"></span>
+          </span>
+          <button id="next" disabled aria-label="Next page" title="Next page">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg>
+          </button>
+        </div>
+        <div class="transport">
+          <button
+            id="back"
+            class="round"
+            disabled
+            aria-label="Previous sentence"
+            title="Previous sentence"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path class="solid" d="M19 20 9 12l10-8z" />
+              <path d="M5 19V5" />
+            </svg>
+          </button>
+          <button id="play" disabled aria-label="Play" title="Play">
+            <svg class="play" viewBox="0 0 24 24" aria-hidden="true">
+              <path class="solid" d="m7 4 13 8-13 8z" />
+            </svg>
+            <svg class="pause" viewBox="0 0 24 24" aria-hidden="true">
+              <rect class="solid" x="6" y="4" width="4" height="16" rx="1" />
+              <rect class="solid" x="14" y="4" width="4" height="16" rx="1" />
+            </svg>
+          </button>
+          <button
+            id="forth"
+            class="round"
+            disabled
+            aria-label="Next sentence"
+            title="Next sentence"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path class="solid" d="m5 4 10 8-10 8z" />
+              <path d="M19 5v14" />
+            </svg>
+          </button>
+        </div>
+        <div class="right">
+          <div class="anchor speedbox">
+            <button
+              id="speed"
+              class="surface"
+              aria-label="Playback speed"
+              title="Playback speed"
+              aria-expanded="false"
+            ></button>
+            <div
+              id="speedmenu"
+              class="pop menu speeds"
+              role="group"
+              aria-label="Playback speed"
+              hidden
+            ></div>
+          </div>
+          <div class="anchor">
+            <button
+              id="settings"
+              class="surface"
+              aria-label="Voice settings"
+              title="Voice settings"
+              aria-expanded="false"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4" />
+              </svg>
+            </button>
+            <div id="panel" class="pop" role="dialog" aria-label="Voice settings" hidden>
+              <label class="field">
+                <span class="name">Language</span>
+                <span class="select">
+                  <select id="lang">
+                    <option value="">Auto</option>
+                  </select>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+                </span>
+              </label>
+              <label class="field">
+                <span class="name">Voice</span>
+                <span class="select">
+                  <select id="voice"></select>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+                </span>
+              </label>
+              <label class="field">
+                <span class="name">Volume</span>
+                <span class="vol">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M11 5 6.5 9H3v6h3.5L11 19z" />
+                    <path d="M16 9a5 5 0 0 1 0 6" />
+                  </svg>
+                  <input id="vol" type="range" min="0" max="1" step="0.05" value="0.6" />
+                </span>
+              </label>
+              <div class="field" id="speedfield">
+                <span class="name">Speed</span>
+                <div class="seg speeds" role="group" aria-label="Playback speed"></div>
+              </div>
+              <div class="field" id="view" hidden>
+                <span class="name">Pages</span>
+                <div class="seg" role="group" aria-label="Pages shown">
+                  <button id="one">One</button>
+                  <button id="two">Two</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </main>
 

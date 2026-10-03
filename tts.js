@@ -33,7 +33,9 @@ const store = {
 }
 
 const audio = new Audio()
-const prefs = { rate: 1.2, vol: 0.6, ...store.get('tts.pdf', {}) }
+const prefs = { rate: 1.2, vol: 0.6, voices: {}, two: true, ...store.get('tts.pdf', {}) }
+// room for an open book: two pages side by side
+const wide = matchMedia('(min-width: 64rem) and (min-aspect-ratio: 5/4)')
 
 let pdf, key
 let raw, offsets // Mac PDFs only: the file as a one-char-per-byte string, and where each object starts
@@ -41,7 +43,9 @@ let opening = 0 // bumped on every open and close, cancels an open in flight
 let page = 1
 let idx = 0
 let sents = []
-let els = [] // the element showing each clause
+let onScreen = []
+let spread = '' // what was last drawn, to skip redrawing it
+const shown = new Map() // page on screen -> the element showing each of its clauses
 let running = false
 let paused = false
 let gen = 0 // bumped on every jump, cancels the loop in flight
@@ -52,15 +56,22 @@ const wavs = new Map() // "page|idx" -> Promise<blob url>
 const lineCache = new Map() // page -> Promise<lines>
 const pages = new Map() // page -> Promise<clauses>
 
-// one voice per language, a "medium" one if there is
+// each language's voices, "medium" ones first: the first is its default
 const rank = v => ['medium', 'high', 'low', 'x_low'].indexOf(v.quality)
-const voice = {}
+// worth offering: full-rate models of one voice, not research sets of many mixed speakers
+const good = v => rank(v) < 2 && v.num_speakers <= 2
+const voices = {}
 for (const v of Object.values(voiceList)
   .filter(v => PATH_MAP[v.key])
   .sort((a, b) => rank(a) - rank(b)))
-  voice[v.language.family] ??= { key: v.key, name: v.language.name_native }
-for (const [code, v] of Object.entries(voice).sort((a, b) => a[1].name.localeCompare(b[1].name)))
-  $('lang').add(new Option(v.name, code))
+  (voices[v.language.family] ??= { name: v.language.name_native, list: [] }).list.push(v)
+for (const l of Object.values(voices)) {
+  // a language with nothing good keeps the best it has
+  const best = l.list.some(good) ? good : v => rank(v) === rank(l.list[0])
+  l.list = l.list.filter(best)
+}
+for (const [code, l] of Object.entries(voices).sort((a, b) => a[1].name.localeCompare(b[1].name)))
+  $('lang').add(new Option(l.name, code))
 // franc speaks ISO 639-3
 const iso = Object.fromEntries(
   'ara:ar cat:ca ces:cs dan:da deu:de ell:el eng:en spa:es pes:fa fin:fi fra:fr hun:hu isl:is ita:it kat:ka kaz:kk ltz:lb nep:ne nld:nl nob:no nno:no pol:pl por:pt ron:ro rus:ru slk:sk slv:sl srp:sr swe:sv swh:sw tur:tr ukr:uk vie:vi cmn:zh'
@@ -68,6 +79,21 @@ const iso = Object.fromEntries(
     .map(p => p.split(':')),
 )
 const lang = () => $('lang').value || detected
+// the voice picked for the current language, else its default
+const voiceKey = () => {
+  const { list } = voices[lang()]
+  return (list.find(v => v.key === prefs.voices[lang()]) ?? list[0]).key
+}
+function fillVoices() {
+  // "es_MX-claude-high" -> "Claude (MX, high)"
+  const label = v => {
+    const name = v.name.replace(/_/g, ' ').replace(/^./, c => c.toUpperCase())
+    return `${name} (${v.language.region}, ${v.quality.replace('_', ' ')})`
+  }
+  $('voice').replaceChildren(...voices[lang()].list.map(v => new Option(label(v), v.key)))
+  $('voice').value = voiceKey()
+}
+fillVoices()
 
 // the voice barely pauses at punctuation, so each clause is spoken on its own with a silence after (ms)
 const GAP = { ',': 60, ';': 200, ':': 200, '—': 160, '–': 160 }
@@ -254,43 +280,67 @@ async function show(n, i = 0) {
   idx = i
   sents = await clauses(n)
   if (doc !== pdf) return
+  // as in a book, a spread opens on an odd page
+  const two = prefs.two && wide.matches && pdf.numPages > 1
+  const first = two ? n - ((n + 1) % 2) : n
+  onScreen = (two ? [first, first + 1] : [first]).filter(m => m <= pdf.numPages)
+  const lists = await Promise.all(onScreen.map(clauses))
+  if (doc !== pdf) return
+  if (spread !== `${onScreen}|${lang()}`) {
+    spread = `${onScreen}|${lang()}`
+    shown.clear()
+    $('text').replaceChildren(...onScreen.map((m, k) => render(m, lists[k])))
+  }
   $('empty').hidden = true
   $('text').hidden = false
   $('text').lang = lang()
-  $('text').replaceChildren()
-  els = []
-  sents.forEach((s, j) => {
-    if (s.brk) $('text').append(document.createElement(s.head ? 'h2' : 'p'))
-    if (!s.first) return (els[j] = els[j - 1]).append(' ' + s.t)
-    els[j] = document.createElement('span')
-    els[j].textContent = s.t
-    els[j].onclick = () => go(page, j)
-    $('text').lastChild.append(els[j], ' ')
-  })
-  $('folio').textContent = `${n} / ${pdf.numPages}`
-  $('prev').disabled = n <= 1
-  $('next').disabled = n >= pdf.numPages
+  document.body.classList.toggle('two', two)
+  $('cur').textContent = onScreen.join('–')
+  $('total').textContent = ` / ${pdf.numPages}`
+  $('prev').disabled = first <= 1
+  $('next').disabled = onScreen.at(-1) >= pdf.numPages
   mark()
   if (sents[idx]) wav(page, idx, sents[idx].t) // warm up, so Play answers at once
 }
 
+function render(n, list) {
+  const el = document.createElement('div')
+  el.className = 'page'
+  const els = []
+  list.forEach((s, j) => {
+    if (s.brk) el.append(document.createElement(s.head ? 'h2' : 'p'))
+    if (!s.first) return (els[j] = els[j - 1]).append(' ' + s.t)
+    els[j] = document.createElement('span')
+    els[j].textContent = s.t
+    els[j].onclick = () => go(n, j)
+    el.lastChild.append(els[j], ' ')
+  })
+  shown.set(n, els)
+  return el
+}
+
 function mark() {
   $('text').querySelector('.now')?.classList.remove('now')
-  els[idx]?.classList.add('now')
-  els[idx]?.scrollIntoView({ block: 'nearest' })
+  const el = shown.get(page)?.[idx]
+  el?.classList.add('now')
+  el?.scrollIntoView({ block: 'nearest' })
+  const read = pdf ? (page - 1 + idx / (sents.length || 1)) / pdf.numPages : 0
+  $('bar').style.width = `${read * 100}%`
+  $('bar').parentNode.ariaValueNow = Math.round(read * 100)
   store.set(key, [page, idx])
 }
 
 async function synth(text) {
-  const v = voice[lang()]
-  if (session?.voiceId !== v.key) {
+  const voiceId = voiceKey()
+  const { name } = voices[lang()]
+  if (session?.voiceId !== voiceId) {
     TtsSession._instance = null // the library keeps a singleton
     session = await TtsSession.create({
-      voiceId: v.key,
+      voiceId,
       progress: p =>
         p.url.endsWith('.onnx') &&
         !$('status').dataset.refusal &&
-        status(`Fetching the ${v.name} voice, ${Math.round((p.loaded / p.total) * 100)}%`),
+        status(`Fetching the ${name} voice, ${Math.round((p.loaded / p.total) * 100)}%`),
     })
     if (!$('status').dataset.refusal) status('')
   }
@@ -378,6 +428,24 @@ async function go(p, i = 0) {
   if (was) speak()
 }
 
+// to the next sentence, or back to the start of this one and then to the one before
+async function sentence(dir) {
+  const starts = sents.flatMap((s, j) => (s.first ? [j] : []))
+  const here = starts.findLast(j => j <= idx) ?? 0
+  const to =
+    dir > 0 ? starts.find(j => j > idx) : idx > here ? here : starts.findLast(j => j < here)
+  if (to != null) return go(page, to)
+  if (dir > 0 && page < pdf.numPages) return go(page + 1)
+  if (dir < 0 && page > 1)
+    return go(
+      page - 1,
+      Math.max(
+        0,
+        (await clauses(page - 1)).findLastIndex(s => s.first),
+      ),
+    )
+}
+
 function toggle() {
   if (!running) return speak()
   paused = !paused
@@ -387,8 +455,10 @@ function toggle() {
 }
 
 function ui() {
-  $('play').textContent = running && !paused ? 'Pause' : 'Play'
-  $('play').disabled = $('stop').disabled = !pdf
+  const playing = running && !paused
+  $('play').classList.toggle('playing', playing)
+  $('play').ariaLabel = $('play').title = playing ? 'Pause' : 'Play'
+  $('play').disabled = $('back').disabled = $('forth').disabled = !pdf
 }
 
 function close() {
@@ -400,13 +470,18 @@ function close() {
   pdf?.destroy()
   pdf = raw = offsets = null
   sents = []
-  els = []
+  onScreen = []
+  spread = ''
+  shown.clear()
+  document.body.classList.remove('two')
   $('text').replaceChildren()
   $('text').hidden = true
   $('empty').hidden = false
   $('file').textContent = ''
   $('close').hidden = true
-  $('folio').textContent = '–'
+  $('cur').textContent = '–'
+  $('total').textContent = ''
+  $('bar').style.width = 0
   $('prev').disabled = $('next').disabled = true
   $('lang').options[0].text = 'Auto'
   $('pick').value = ''
@@ -459,8 +534,9 @@ async function open(file) {
     if (mine !== opening) return
   }
   const guess = iso[franc(sample)]
-  detected = voice[guess] ? guess : 'en'
-  $('lang').options[0].text = `Auto (${voice[detected].name})`
+  detected = voices[guess] ? guess : 'en'
+  $('lang').options[0].text = `Auto (${voices[detected].name})`
+  fillVoices()
   // the pages sampled so far were split into sentences with the previous language's rules
   pages.clear()
 
@@ -476,28 +552,87 @@ async function open(file) {
 }
 
 $('play').onclick = toggle
-$('stop').onclick = stop
-$('prev').onclick = () => go(page - 1)
-$('next').onclick = () => go(page + 1)
+$('back').onclick = () => sentence(-1)
+$('forth').onclick = () => sentence(1)
+$('prev').onclick = () => go(onScreen[0] - onScreen.length)
+$('next').onclick = () => go(onScreen.at(-1) + 1)
 const volume = v => {
   audio.volume = $('vol').value = prefs.vol = v
   store.set('tts.pdf', prefs)
 }
 $('vol').oninput = e => volume(+e.target.value)
+
+// a button and the panel it opens: Escape or a click elsewhere closes it and hands focus back
+function popover(button, panel) {
+  const set = open => {
+    panel.hidden = !open
+    button.ariaExpanded = open
+    if (open) panel.querySelector('select, button, input')?.focus()
+    else if (panel.contains(document.activeElement)) button.focus()
+  }
+  button.onclick = () => set(panel.hidden)
+  addEventListener(
+    'keydown',
+    e => e.key === 'Escape' && !panel.hidden && (set(false), button.focus()),
+  )
+  addEventListener('pointerdown', e => {
+    if (!panel.hidden && !panel.contains(e.target) && !button.contains(e.target)) set(false)
+  })
+  return set
+}
+popover($('settings'), $('panel'))
+const speedMenu = popover($('speed'), $('speedmenu'))
+
+const SPEEDS = [0.75, 1, 1.1, 1.25, 1.5, 2]
 const speed = r => {
-  prefs.rate = Math.min(3, Math.max(0.5, Math.round(r * 10) / 10))
-  audio.defaultPlaybackRate = audio.playbackRate = prefs.rate
-  $('rate').textContent = prefs.rate.toFixed(1) + '×'
+  prefs.rate = r
+  audio.defaultPlaybackRate = audio.playbackRate = r
   store.set('tts.pdf', prefs)
+  $('speed').textContent = `${r}×`
+  // the usual speeds plus the current one, in the menu and in the settings
+  const all = [...new Set([...SPEEDS, r])].sort((a, b) => a - b)
+  for (const box of document.querySelectorAll('.speeds'))
+    box.replaceChildren(
+      ...all.map(x => {
+        const b = document.createElement('button')
+        b.textContent = `${x}×`
+        b.ariaPressed = x === r
+        b.onclick = () => {
+          const menu = box === $('speedmenu')
+          speed(x)
+          if (menu) speedMenu(false)
+        }
+        return b
+      }),
+    )
 }
 speed(prefs.rate)
 volume(prefs.vol)
-$('slower').onclick = () => speed(prefs.rate - 0.1)
-$('faster').onclick = () => speed(prefs.rate + 0.1)
 $('lang').onchange = () => {
+  fillVoices()
   pages.clear()
   if (pdf) go(page, idx)
 }
+$('voice').onchange = e => {
+  prefs.voices[lang()] = e.target.value
+  store.set('tts.pdf', prefs)
+  if (pdf) go(page, idx)
+}
+const layout = () => {
+  $('view').hidden = !wide.matches
+  $('one').ariaPressed = !prefs.two
+  $('two').ariaPressed = prefs.two
+  if (pdf) show(page, idx)
+}
+const view = two => {
+  prefs.two = two
+  store.set('tts.pdf', prefs)
+  layout()
+}
+layout()
+wide.onchange = layout
+$('one').onclick = () => view(false)
+$('two').onclick = () => view(true)
 $('pick').onchange = e => open(e.target.files[0])
 $('close').onclick = close
 document.querySelector('label[for=pick]').onkeydown = e =>
