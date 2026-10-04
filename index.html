@@ -76,11 +76,8 @@
       outline-offset: -1rem;
     }
 
-    .head,
-    .foot {
-      font-size: 0.875rem;
-    }
     .head {
+      font-size: 0.875rem;
       display: flex;
       align-items: center;
       gap: 1.5rem;
@@ -182,18 +179,15 @@
       color: var(--ink);
     }
 
-    /* the player: progress, one row of controls, and the settings that float above it */
-    .foot,
-    .pop {
+    /* the player: progress, the controls, and the menus that float above them */
+    .foot {
       font:
         15px/1.2 'Instrument Sans',
         'Helvetica Neue',
         sans-serif;
       font-variant-numeric: tabular-nums;
-    }
-    /* the sheet's width follows its height, so the controls are laid out by the room they get, not by the screen */
-    .foot {
       position: relative;
+      /* the controls are laid out by the sheet's width, which follows its height, not the screen's */
       container-type: inline-size;
     }
     #status {
@@ -569,7 +563,7 @@
           </button>
         </div>
         <div class="right">
-          <div class="anchor speedbox">
+          <div class="anchor">
             <button
               id="speed"
               class="surface"

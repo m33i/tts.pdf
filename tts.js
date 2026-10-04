@@ -6,7 +6,7 @@ import {
 import voiceList from 'https://cdn.jsdelivr.net/npm/@mintplex-labs/piper-tts-web@1.0.5/dist/voices_static-D_OtJDHM.js'
 import { franc } from 'https://cdn.jsdelivr.net/npm/franc-min@6.2.0/+esm'
 import { env } from 'onnxruntime-web/wasm'
-env.wasm.proxy = true // off the UI thread; needs the headers in vercel.json
+env.wasm.proxy = true // the voice runs in a worker, off the UI thread; the headers in vercel.json let it use several threads
 pdfjs.GlobalWorkerOptions.workerSrc =
   'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs'
 
@@ -72,7 +72,7 @@ for (const l of Object.values(voices)) {
 }
 for (const [code, l] of Object.entries(voices).sort((a, b) => a[1].name.localeCompare(b[1].name)))
   $('lang').add(new Option(l.name, code))
-// franc speaks ISO 639-3
+// franc answers in ISO 639-3, the voices are filed under two-letter codes
 const iso = Object.fromEntries(
   'ara:ar cat:ca ces:cs dan:da deu:de ell:el eng:en spa:es pes:fa fin:fi fra:fr hun:hu isl:is ita:it kat:ka kaz:kk ltz:lb nep:ne nld:nl nob:no nno:no pol:pl por:pt ron:ro rus:ru slk:sk slv:sl srp:sr swe:sv swh:sw tur:tr ukr:uk vie:vi cmn:zh'
     .split(' ')
