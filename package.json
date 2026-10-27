@@ -1,0 +1,16 @@
+{
+  "name": "tts-pdf",
+  "version": "1.0.0",
+  "description": "Drop a PDF and it is read aloud, in your browser.",
+  "type": "module",
+  "scripts": {
+    "dev": "vercel dev",
+    "build": "echo 'No build step required for vanilla JS project'"
+  },
+  "keywords": ["pdf", "tts", "text-to-speech", "web"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@vercel/analytics": "^1.3.1"
+  }
+}
